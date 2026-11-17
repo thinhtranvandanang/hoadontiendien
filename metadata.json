@@ -2,5 +2,7 @@
   "name": "Đọc Hóa Đơn Tiền Điện",
   "description": "Phần mềm đọc, trích xuất và đối soát chi tiết hóa đơn tiền điện EVN từ hình ảnh.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

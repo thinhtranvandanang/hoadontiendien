@@ -106,6 +106,31 @@ export default function App() {
     [],
   );
 
+  const parseBillResponse = async (res: Response) => {
+    const rawText = await res.text();
+    if (!rawText.trim()) {
+      throw new Error(
+        `Máy chủ không trả về dữ liệu (HTTP ${res.status}). Vui lòng bấm "Thử đọc lại".`,
+      );
+    }
+    let payload: {
+      data?: ElectricityBillData;
+      verification?: BillVerificationSummary;
+      error?: string;
+    };
+    try {
+      payload = JSON.parse(rawText);
+    } catch {
+      throw new Error(
+        `Phản hồi từ máy chủ không đúng định dạng (HTTP ${res.status}). Vui lòng bấm "Thử đọc lại".`,
+      );
+    }
+    if (!res.ok || !payload.data || !payload.verification) {
+      throw new Error(payload.error || 'Không thể phân tích hóa đơn.');
+    }
+    return { data: payload.data, verification: payload.verification };
+  };
+
   const analyzeSampleBill = useCallback(async () => {
     setImageUrl(SAMPLE_IMAGE_URL);
     setFileName(SAMPLE_FILE_NAME);
@@ -118,23 +143,11 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ useSample: true }),
       });
-      const payload = (await res.json()) as {
-        data?: ElectricityBillData;
-        verification?: BillVerificationSummary;
-        error?: string;
-      };
-      if (!res.ok || !payload.data || !payload.verification) {
-        throw new Error(payload.error || 'Không thể phân tích hóa đơn mẫu.');
-      }
+      const { data, verification } = await parseBillResponse(res);
 
-      setCurrentData(payload.data);
-      setCurrentVerification(payload.verification);
-      saveNewRecord(
-        payload.data,
-        payload.verification,
-        SAMPLE_IMAGE_URL,
-        SAMPLE_FILE_NAME,
-      );
+      setCurrentData(data);
+      setCurrentVerification(verification);
+      saveNewRecord(data, verification, SAMPLE_IMAGE_URL, SAMPLE_FILE_NAME);
     } catch (err) {
       setError(
         err instanceof Error
@@ -159,18 +172,11 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ imageBase64: dataUrl, mimeType }),
         });
-        const payload = (await res.json()) as {
-          data?: ElectricityBillData;
-          verification?: BillVerificationSummary;
-          error?: string;
-        };
-        if (!res.ok || !payload.data || !payload.verification) {
-          throw new Error(payload.error || 'Không thể đọc hóa đơn từ ảnh tải lên.');
-        }
+        const { data, verification } = await parseBillResponse(res);
 
-        setCurrentData(payload.data);
-        setCurrentVerification(payload.verification);
-        saveNewRecord(payload.data, payload.verification, dataUrl, nextFileName);
+        setCurrentData(data);
+        setCurrentVerification(verification);
+        saveNewRecord(data, verification, dataUrl, nextFileName);
       } catch (err) {
         setError(
           err instanceof Error

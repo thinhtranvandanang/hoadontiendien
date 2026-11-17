@@ -148,46 +148,68 @@ function formatGeminiError(error: unknown): string {
   return raw;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`TIMEOUT:${label}`));
+    }, ms);
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 async function parseBillWithRetry(
   ai: GoogleGenAI,
   base64Data: string,
   mimeType: string,
 ): Promise<ElectricityBillData> {
-  const attempts: Array<{ model: string; delayMs: number; useThinkingLow: boolean }> = [
-    { model: 'gemini-4-hydrogen', delayMs: 1200, useThinkingLow: true },
-    { model: 'gemini-4-hydrogen', delayMs: 2500, useThinkingLow: true },
-    { model: 'gemini-3.1-flash-lite', delayMs: 0, useThinkingLow: false },
+  const attempts: Array<{ model: string; timeoutMs: number; useThinkingLow: boolean }> = [
+    { model: 'gemini-4-hydrogen', timeoutMs: 10000, useThinkingLow: true },
+    { model: 'gemini-3.1-flash-lite', timeoutMs: 12000, useThinkingLow: false },
+    { model: 'gemini-3.1-flash-lite', timeoutMs: 12000, useThinkingLow: false },
   ];
 
   let lastError: unknown;
 
   for (let i = 0; i < attempts.length; i++) {
-    const { model, delayMs, useThinkingLow } = attempts[i];
+    const { model, timeoutMs, useThinkingLow } = attempts[i];
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: {
-          parts: [
-            {
-              inlineData: {
-                mimeType,
-                data: base64Data,
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: base64Data,
+                },
               },
-            },
-            {
-              text: 'Đọc và trích xuất đầy đủ toàn bộ thông tin trên hóa đơn tiền điện này thành JSON chính xác tuyệt đối.',
-            },
-          ],
-        },
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          responseMimeType: 'application/json',
-          responseSchema: billResponseSchema,
-          ...(useThinkingLow
-            ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-            : {}),
-        },
-      });
+              {
+                text: 'Đọc và trích xuất đầy đủ toàn bộ thông tin trên hóa đơn tiền điện này thành JSON chính xác tuyệt đối.',
+              },
+            ],
+          },
+          config: {
+            systemInstruction: SYSTEM_INSTRUCTION,
+            responseMimeType: 'application/json',
+            responseSchema: billResponseSchema,
+            ...(useThinkingLow
+              ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+              : {}),
+          },
+        }),
+        timeoutMs,
+        model,
+      );
 
       const rawText = (response.text ?? '').trim();
       if (!rawText) {
@@ -197,8 +219,8 @@ async function parseBillWithRetry(
       return parsed;
     } catch (err) {
       lastError = err;
-      if (delayMs > 0 && i < attempts.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (i < attempts.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
   }
