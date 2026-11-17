@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "doc-hoa-don-tien-dien",
+  "name": "hoadontiendien",
   "main": "worker.ts",
   "compatibility_date": "2025-04-01",
   "compatibility_flags": [
