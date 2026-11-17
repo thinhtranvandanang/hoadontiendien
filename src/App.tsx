@@ -13,10 +13,43 @@ const SAMPLE_IMAGE_URL = '/assets/aistudio/image_51f8d943.png';
 const SAMPLE_FILE_NAME = 'Hóa đơn EVNHCMC (mẫu đính kèm).png';
 const HISTORY_STORAGE_KEY = 'evn_bill_reader_history_v1';
 
-function readFileAsDataUrl(file: File): Promise<string> {
+function readFileAsDataUrl(file: File): Promise<{ dataUrl: string; mimeType: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onload = () => {
+      const originalDataUrl = String(reader.result || '');
+      // Compress large images (> 1.2 MB or wide camera shots) so Edge/Cloudflare requests stay fast
+      if (file.size <= 1_200_000) {
+        resolve({ dataUrl: originalDataUrl, mimeType: file.type || 'image/png' });
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        const maxSide = 1800;
+        let { width, height } = img;
+        if (width > maxSide || height > maxSide) {
+          const ratio = Math.min(maxSide / width, maxSide / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve({ dataUrl: originalDataUrl, mimeType: file.type || 'image/png' });
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressed = canvas.toDataURL('image/jpeg', 0.88);
+        resolve({ dataUrl: compressed, mimeType: 'image/jpeg' });
+      };
+      img.onerror = () => {
+        resolve({ dataUrl: originalDataUrl, mimeType: file.type || 'image/png' });
+      };
+      img.src = originalDataUrl;
+    };
     reader.onerror = () => reject(new Error('Không thể đọc tệp ảnh từ thiết bị.'));
     reader.readAsDataURL(file);
   });
@@ -109,8 +142,18 @@ export default function App() {
   const parseBillResponse = async (res: Response) => {
     const rawText = await res.text();
     if (!rawText.trim()) {
+      if (res.status === 404 || res.status === 405) {
+        throw new Error(
+          `Endpoint /api/parse-bill chưa được kích hoạt trên máy chủ (HTTP ${res.status}). Nếu triển khai lên Cloudflare Workers, hãy đảm bảo chạy lệnh build trước khi deploy với wrangler.jsonc và cấu hình secret GEMINI_API_KEY.`,
+        );
+      }
       throw new Error(
         `Máy chủ không trả về dữ liệu (HTTP ${res.status}). Vui lòng bấm "Thử đọc lại".`,
+      );
+    }
+    if (rawText.trim().startsWith('<!doctype') || rawText.trim().startsWith('<html')) {
+      throw new Error(
+        'Máy chủ trả về trang HTML thay vì dữ liệu JSON cho /api/parse-bill. Hãy kiểm tra cấu hình Worker (wrangler.jsonc) để định tuyến /api/* về worker.ts.',
       );
     }
     let payload: {
@@ -193,8 +236,8 @@ export default function App() {
   const handleSelectFile = useCallback(
     async (file: File) => {
       try {
-        const dataUrl = await readFileAsDataUrl(file);
-        await analyzeImageDataUrl(dataUrl, file.type || 'image/png', file.name);
+        const { dataUrl, mimeType } = await readFileAsDataUrl(file);
+        await analyzeImageDataUrl(dataUrl, mimeType, file.name);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Không thể đọc tệp ảnh.');
       }
