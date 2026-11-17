@@ -8,6 +8,16 @@ interface AssetsBinding {
 export interface Env {
   ASSETS: AssetsBinding;
   GEMINI_API_KEY?: string;
+  GOOGLE_API_KEY?: string;
+  API_KEY?: string;
+}
+
+function resolveApiKey(env: Env): string {
+  const fromEnv = env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.API_KEY || '';
+  if (fromEnv.trim()) return fromEnv.trim();
+  const procEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  const fromProcess = procEnv?.GEMINI_API_KEY || procEnv?.GOOGLE_API_KEY || procEnv?.API_KEY || '';
+  return fromProcess.trim();
 }
 
 const SYSTEM_INSTRUCTION = `Bạn là hệ thống OCR chuyên sâu đọc hóa đơn tiền điện Việt Nam (EVNHCMC, EVNHANOI, EVNSPC, EVNCPC, EVNNPC và các đơn vị điện lực).
@@ -214,12 +224,17 @@ async function callGeminiRest(
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const apiKey = resolveApiKey(env);
 
     if (url.pathname === '/api/health') {
+      const configuredVarNames = Object.keys(env || {}).filter(
+        (key) => key !== 'ASSETS' && Boolean((env as unknown as Record<string, unknown>)[key]),
+      );
       return jsonResponse({
         ok: true,
         runtime: 'cloudflare-worker',
-        hasApiKey: Boolean(env.GEMINI_API_KEY),
+        hasApiKey: Boolean(apiKey),
+        configuredVarNames,
       });
     }
 
@@ -228,11 +243,11 @@ export default {
         return jsonResponse({ error: 'Phương thức không hợp lệ. Chỉ hỗ trợ POST.' }, 405);
       }
 
-      if (!env.GEMINI_API_KEY) {
+      if (!apiKey) {
         return jsonResponse(
           {
             error:
-              'Chưa cấu hình GEMINI_API_KEY trên Cloudflare Workers. Hãy thêm secret GEMINI_API_KEY trong phần Settings > Variables and Secrets của Worker.',
+              'Worker chưa nhận được GEMINI_API_KEY lúc chạy (Runtime). Trên Cloudflare Dashboard, hãy thêm GEMINI_API_KEY ở mục Settings > Variables and Secrets (không phải mục Build variables), sau đó bấm Deploy để áp dụng.',
           },
           500,
         );
@@ -283,7 +298,7 @@ export default {
         for (const attempt of attempts) {
           try {
             parsed = await callGeminiRest(
-              env.GEMINI_API_KEY,
+              apiKey,
               attempt.model,
               finalBase64,
               finalMimeType,
